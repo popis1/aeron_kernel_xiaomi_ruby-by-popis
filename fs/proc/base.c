@@ -2198,6 +2198,30 @@ static const struct inode_operations proc_map_files_inode_operations = {
 	.setattr	= proc_setattr,
 };
 
+
+static bool proc_map_files_vma_visible(struct vm_area_struct *vma)
+{
+	struct file *vm_file;
+#ifdef CONFIG_KSU_SUSFS_SUS_MAP
+	struct inode *inode;
+#endif
+
+	if (!vma)
+		return false;
+
+	vm_file = vma->vm_file;
+	if (!vm_file || !vm_file->f_path.dentry)
+		return false;
+
+#ifdef CONFIG_KSU_SUSFS_SUS_MAP
+	inode = d_inode(vm_file->f_path.dentry);
+	if (!inode || SUSFS_IS_INODE_SUS_MAP(inode))
+		return false;
+#endif
+
+	return true;
+}
+
 static int
 proc_map_files_readdir(struct file *file, struct dir_context *ctx)
 {
@@ -2209,9 +2233,6 @@ proc_map_files_readdir(struct file *file, struct dir_context *ctx)
 	struct map_files_info info;
 	struct map_files_info *p;
 	int ret;
-#ifdef CONFIG_KSU_SUSFS_SUS_MAP
-	struct inode *inode;
-#endif
 
 	ret = -ENOENT;
 	task = get_proc_task(file_inode(file));
@@ -2248,13 +2269,8 @@ proc_map_files_readdir(struct file *file, struct dir_context *ctx)
 	 * routine might require mmap_sem taken in might_fault().
 	 */
 	for (vma = mm->mmap, pos = 2; vma; vma = vma->vm_next) {
-		if (!vma->vm_file)
+		if (!proc_map_files_vma_visible(vma))
 			continue;
-#ifdef CONFIG_KSU_SUSFS_SUS_MAP
-		inode = file_inode(vma->vm_file);
-		if (!inode || SUSFS_IS_INODE_SUS_MAP(inode))
-			continue;
-#endif
 		if (++pos > ctx->pos)
 			nr_files++;
 	}
@@ -2284,9 +2300,19 @@ proc_map_files_readdir(struct file *file, struct dir_context *ctx)
 
 			info.start = vma->vm_start;
 			info.end = vma->vm_end;
-			info.mode = vma->vm_file->f_mode;
-			if (flex_array_put(fa, filled++, &info, GFP_KERNEL))
-				BUG();
+			info.mode = READ_ONCE(vma->vm_file->f_mode);
+			if (flex_array_put(fa, filled, &info, GFP_KERNEL)) {
+				ret = -ENOMEM;
+				break;
+			}
+			filled++;
+		}
+
+		if (ret) {
+			flex_array_free(fa);
+			mmap_read_unlock(mm);
+			mmput(mm);
+			goto out_put_task;
 		}
 
 		nr_files = filled;
