@@ -850,7 +850,7 @@ static ssize_t mem_rw(struct file *file, char __user *buf,
 		vma = find_vma(mm, addr);
 		if (vma && vma->vm_file) {
 			struct inode *inode = file_inode(vma->vm_file);
-			if (SUSFS_IS_INODE_SUS_MAP(inode)) {
+			if (!inode || SUSFS_IS_INODE_SUS_MAP(inode)) {
 				if (write) {
 					copied = -EFAULT;
 				} else {
@@ -2252,7 +2252,7 @@ proc_map_files_readdir(struct file *file, struct dir_context *ctx)
 			continue;
 #ifdef CONFIG_KSU_SUSFS_SUS_MAP
 		inode = file_inode(vma->vm_file);
-		if (SUSFS_IS_INODE_SUS_MAP(inode))
+		if (!inode || SUSFS_IS_INODE_SUS_MAP(inode))
 			continue;
 #endif
 		if (++pos > ctx->pos)
@@ -2276,7 +2276,7 @@ proc_map_files_readdir(struct file *file, struct dir_context *ctx)
 				continue;
 #ifdef CONFIG_KSU_SUSFS_SUS_MAP
 			inode = file_inode(vma->vm_file);
-			if (SUSFS_IS_INODE_SUS_MAP(inode))
+			if (!inode || SUSFS_IS_INODE_SUS_MAP(inode))
 				continue;
 #endif
 			if (++pos <= ctx->pos)
