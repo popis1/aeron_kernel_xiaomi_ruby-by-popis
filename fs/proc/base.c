@@ -2165,8 +2165,8 @@ static struct dentry *proc_map_files_lookup(struct inode *dir,
 	if (dname_to_vma_addr(dentry, &vm_start, &vm_end))
 		goto out_put_task;
 
-	mm = get_task_mm(task);
-	if (!mm)
+	mm = mm_access(task, PTRACE_MODE_READ_FSCREDS);
+	if (IS_ERR_OR_NULL(mm))
 		goto out_put_task;
 
 	result = ERR_PTR(-EINTR);
@@ -2226,8 +2226,8 @@ proc_map_files_readdir(struct file *file, struct dir_context *ctx)
 	if (!dir_emit_dots(file, ctx))
 		goto out_put_task;
 
-	mm = get_task_mm(task);
-	if (!mm)
+	mm = mm_access(task, PTRACE_MODE_READ_FSCREDS);
+	if (IS_ERR_OR_NULL(mm))
 		goto out_put_task;
 
 	ret = mmap_read_lock_killable(mm);
