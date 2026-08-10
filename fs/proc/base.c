@@ -2204,7 +2204,7 @@ proc_map_files_readdir(struct file *file, struct dir_context *ctx)
 	struct vm_area_struct *vma;
 	struct task_struct *task;
 	struct mm_struct *mm;
-	unsigned long nr_files, pos, i;
+	unsigned long nr_files, pos, i, filled;
 	struct flex_array *fa = NULL;
 	struct map_files_info info;
 	struct map_files_info *p;
@@ -2247,17 +2247,21 @@ proc_map_files_readdir(struct file *file, struct dir_context *ctx)
 	 * otherwise we get lockdep complained, since filldir()
 	 * routine might require mmap_sem taken in might_fault().
 	 */
-
 	for (vma = mm->mmap, pos = 2; vma; vma = vma->vm_next) {
-		if (vma->vm_file && ++pos > ctx->pos)
+		if (!vma->vm_file)
+			continue;
+#ifdef CONFIG_KSU_SUSFS_SUS_MAP
+		inode = file_inode(vma->vm_file);
+		if (SUSFS_IS_INODE_SUS_MAP(inode))
+			continue;
+#endif
+		if (++pos > ctx->pos)
 			nr_files++;
 	}
 
 	if (nr_files) {
-		fa = flex_array_alloc(sizeof(info), nr_files,
-					GFP_KERNEL);
-		if (!fa || flex_array_prealloc(fa, 0, nr_files,
-						GFP_KERNEL)) {
+		fa = flex_array_alloc(sizeof(info), nr_files, GFP_KERNEL);
+		if (!fa || flex_array_prealloc(fa, 0, nr_files, GFP_KERNEL)) {
 			ret = -ENOMEM;
 			if (fa)
 				flex_array_free(fa);
@@ -2265,8 +2269,9 @@ proc_map_files_readdir(struct file *file, struct dir_context *ctx)
 			mmput(mm);
 			goto out_put_task;
 		}
-		for (i = 0, vma = mm->mmap, pos = 2; vma;
-				vma = vma->vm_next) {
+
+		for (filled = 0, vma = mm->mmap, pos = 2; vma;
+		     vma = vma->vm_next) {
 			if (!vma->vm_file)
 				continue;
 #ifdef CONFIG_KSU_SUSFS_SUS_MAP
@@ -2280,10 +2285,13 @@ proc_map_files_readdir(struct file *file, struct dir_context *ctx)
 			info.start = vma->vm_start;
 			info.end = vma->vm_end;
 			info.mode = vma->vm_file->f_mode;
-			if (flex_array_put(fa, i++, &info, GFP_KERNEL))
+			if (flex_array_put(fa, filled++, &info, GFP_KERNEL))
 				BUG();
 		}
+
+		nr_files = filled;
 	}
+
 	mmap_read_unlock(mm);
 	mmput(mm);
 
@@ -2292,15 +2300,19 @@ proc_map_files_readdir(struct file *file, struct dir_context *ctx)
 		unsigned int len;
 
 		p = flex_array_get(fa, i);
+		if (!p)
+			continue;
+
 		len = snprintf(buf, sizeof(buf), "%lx-%lx", p->start, p->end);
 		if (!proc_fill_cache(file, ctx,
-				      buf, len,
-				      proc_map_files_instantiate,
-				      task,
-				      (void *)(unsigned long)p->mode))
+				     buf, len,
+				     proc_map_files_instantiate,
+				     task,
+				     (void *)(unsigned long)p->mode))
 			break;
 		ctx->pos++;
 	}
+
 	if (fa)
 		flex_array_free(fa);
 
